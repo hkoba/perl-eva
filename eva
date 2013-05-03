@@ -1,0 +1,2315 @@
+#!/usr/bin/perl -w
+# -*- perl -*-
+# Copyright (c) 1995,1996,1998 by KOBAYASI Hiroaki. All rights
+# reserved.  This is free software; you can redistribute
+# part/whole of it and/or modify part/whole of it under the same
+# terms as Perl itself.
+# NO WARRANTY. PLAY WITH YOUR OWN RISKS.
+use strict;
+
+#-----------------
+use FindBin;
+use File::Basename; # require is not ok for fileparse.
+use File::Spec; # require is not ok for rel2abs
+
+# pathname without extension.
+sub rootname {
+  my ($basename, $dirname, $suffix) = fileparse($_[0], $_[1] || qr{\.\w+});
+  join "/", File::Spec->rel2abs($dirname), $basename;
+}
+
+use lib grep {-d} rootname("$FindBin::RealBin/$FindBin::RealScript").".lib";
+#-----------------
+
+
+=head1 NAME
+
+EVA -- pesudo-stack based evaluator of perl expression.
+
+EVA is a Perl/Tk script which is intended to serve as an
+environment for your "casual" programming life. It is still
+tiny. But I wish this would grow to a command B<region> shell
+for OO I<programming> age.
+
+=head1 SYNOPSIS
+
+eva [ filename ]
+
+=cut
+
+# If I put 'Japanese(EUC)' texts here,
+# then '-T eva' fails. This cause ...
+
+=head2 Background
+
+=over 2
+
+=item * First motivation ...
+
+is to achieve short turn around of each trial in perl/Tk
+programming. Programming about Widget/Window needs many
+cut-and-try. In perl/Tk, first invocation and creation of new
+widget takes much time. But after the initalization, adding new
+widgets to existing widget is enough rapid. So I decided to make
+a 'launcher' script.
+
+For example, on my SS5, 
+
+ use Tk;
+ MainWindow->new->Scrolled('Text')->pack;
+ MainLoop unless caller;
+
+takes:
+
+   3.271s real  1.750s user  0.680s system  61% 
+
+But, from EVA, it takes only:
+
+   1 secs ( 0.35 usr  0.02 sys =  0.37 cpu)
+
+EVA is not line-oriented, but region-oriented (== B<Return
+insensitive>). And what you have wrote is treated as
+B<subroutine>.  We already have 'tkpsh' and 'rmt' in standard
+distribution.  But I feel they are a little more line-oriented
+than my need.  So I made this.
+
+Note: If you are using Built-in tkpod in I<Help> menu to read
+this pod, try Mouse B<button3> in colored block like this:
+
+  print "How about this?\n";
+
+This colored region will be selected as X-Selection, and
+I<Eval> menu will popup. 
+
+=item * Second motivation...
+
+is to serve as a stuff to enlight perl/Tk labyrinth.
+As a newbie to Tk, I needed many 'print/printf' in
+my scripts. But while we already have useful widgets,
+there are no reason to stay 'printf-only-debugging'.
+
+So I decided to provide generic facility in EVA 
+to interact/inspect/navigate with running widgets.
+
+Try <Double-1> (say, 'Open') in Listbox. 'Push' menu & 
+'Inspect' menu may also show useful information.
+
+=item * Third? goal...
+
+is to achieve B<marriage of programming & interactive-operation>
+in OOP-environment. (This is only half achieved, though.)  In
+perl5 (& many other OOP languages), you can do many jobs by
+simply calling a method with arguments, like this:
+
+  $object->method( @args )
+
+So, if we have place-holder for C<$object> and C<@args>, then
+rest of our jobs are only selecting appropriate C<method>. From
+my experiance about HP's stack-based calculator, user visible
+L<STACK> is appropriate for such place-holder.
+
+I don't intend to build closed GUI builder, but to build B<open
+co-operative environment for perl programmer>. Of course, we
+already have similar co-operative environment: Great I<Emacs>.
+But Elisp is not OOPL. And IMHO, at least for my typical
+scripting jobs, elisp takes many lines than perl. So I made
+this.
+
+=back
+
+=head1 DESCRIPTION
+
+=over 2
+
+=item Operation via Mouse.
+
+Select a perl's expression displayed in B<arbitrary> X
+application (i.e. xterm, emacs, ..., or EVA itself). And then
+invoke I<'Evaluate Selection'> entry in I<'Eval'> menu.
+Basically, it does:
+
+  eval( $eva->SelectionGet )
+
+Yes, this is really I<dangerous> stuff. The result is printed to
+stderr (quoted by '<>') and pushed on the L<STACK>.  If
+evaluation error occurs, the error message is shown in
+ErrorDialog.
+
+=item Operation via Keyboard.
+
+You can get similar effect by typing I<'Control-Return'>(Say,
+B<Commit>).  In this case, EVA evaluates Text between I<marker>
+(a Green region that contains '; ') and cursor, and set new
+I<marker> to the cursor position.  If you want to set I<marker>
+to another position, type I<'Control-space'>.
+
+=item STACK
+
+EVA keeps evaluation results on two Listboxes: B<ARG[0]>(Target
+list), and B<ARG[1..N]>(Args list). These are called B<pseudo>
+STACK. 
+
+EVA does more jobs than merely C<eval>, at each evaluation. When
+expression is given to EVA, [1] in the first phase, the expression
+is compiled as an B<anonymous sub> in specified package/context.
+[2] Second phase, EVA assigns current I<X Selection> to C<$_>.
+[3] Then EVA prepares arguments for it from L<STACK> and [4] push 
+resuls of evaluation to L<STACK>. Abstractly, like this:
+
+  $code   = eval "sub { YOUR_EXPRESSION }";   # [1]
+  
+  $_      = $eva->SelectionGet;               # [2]
+  
+  @result = &$code( $ARG[0], @ARG[1..N] )  ); # [3]
+  
+  $eva->Push( @result );                      # [4]
+
+If the evaluation returns single value and it is I<object>
+(Reference to the blessed value), the result is pushed to top of
+B<$ARG[0]> listbox. Otherwise, the result appears B<@ARG[1..N]>
+listbox. In this later case, old values in B<@ARG[1..N]> is
+discarded.
+
+So, if your expression is:
+
+  1..8;
+
+then, 1, 2, .. 8 will appear on the listbox B<@ARG[1..N]>.
+
+If your expression is:
+
+  # FOO BAR FOO BAR
+  split " "
+  # BAR FOO BAR FOO
+
+then, you will see '#', 'FOO', 'BAR',..., 'split', '"','"', .. 
+on the listbox B<@ARG[1..N]>.
+
+If your expression is:
+
+  use News::NNTPClient;
+  new News::NNTPClient;
+
+then, blessed object like this:
+
+  bless({EOL=>' ',SOCK=>'News::NNTPClient::SOCK1', ...
+
+will appear on the listbox B<$ARG[0]>. In later case, you can
+call its B<method> like this:
+
+  shift->help;
+
+If you want to know which methods the object has, invoke
+B<FindMethods> entry in B<Inspect> menu.
+
+You can toggle show/hide of L<STACK> via B<View Stack>
+checkbutton in B<Eval> menu.
+
+If you double-click mouse-button-1 in L<STACK>, special B<Open>
+operation is applied. (Needs documentation, but this function is
+under-construction!)
+
+=item Context of evaluation:
+
+Normally, evaluation is done on I<package main>.  EVA itself
+lives in I<package Evaluator::EVA>.  So in normal case, you
+don't need to care name-confliction.
+
+If you want to change package, set the package name to a
+selection and invoke B<get from selection ...> entry in
+B<package> menu.
+
+=back
+
+=head1 EXAMPLE
+
+=head2 Scenario 1.
+
+Simple perl expression. Directory listing.
+
+=over 2
+
+=item [1] To put file listing on ARG[1..N] stack.
+
+  <*>;   
+
+=item [2] And choose directory from them.
+
+  shift;           # to skip ARG[0]
+  grep { -d } @_ ;
+
+=item [3] sort them reverse order.
+
+  shift;
+  sort { $b cmp $a } @_ ;
+
+=item [4] define a new subroutine.
+
+  sub foo { print "FOOO\n";}
+
+=item [5] execute the sub.
+
+  foo
+
+=back
+
+=head2 Scenario 2.
+
+Play with a Tk::Canvas.
+
+=over 2
+
+=item [1]  Create a new window.
+
+  MainWindow->new;
+
+=item [2] Add Canvas ( not mapped. ).
+
+  shift->Canvas;
+
+=item [3]  Pack it.
+
+  shift->pack(-fill => 'both', -expand => 1);
+
+=item [4]  Create a circle.
+
+  shift->create('oval' => 0, 0, 100, 100,
+               -fill => 'SeaGreen3');
+
+=item [5]  Bind perl's expression.
+
+  my ($canvas, $id) = @_;
+  $canvas->addtag('testbind', withtag => $id);
+
+  $canvas->bind('testbind', '<1>'
+                => [ sub { print "FOO(@_)\n" }
+                   , 1..8
+                   ])
+
+Now you will see one oval item on the canvas, and if you click
+it, you will get an output like this:
+
+   FOO(Tk::Canvas=HASH(0x42d2fc) 1 2 3 4 5 6 7 8)
+
+=back
+
+=head2 Scenario 3
+
+Play with running EVA itself.
+
+=over 2
+
+=item [1] Invoke I<EVA itself> entry in I<Push> menu.
+
+Then you will see EVA itself on ARG[0], like:
+
+  Evaluator::EVA=HASH(0x2ef468)
+
+=item [2] Tear Off all menu of EVA.
+
+  my $eva = shift;
+  my $w;
+  foreach $w ( $eva->Descendants ) {
+    if($w->IsMenu){
+      $w->TearOffMenu;
+      $eva->update;
+    }
+  }
+  $eva;
+
+=item [3] To add new Menu.
+
+  my $eva  = shift;
+  my $mbar = $eva->Subwidget('UserMenu');
+  $mbar->AddMenu
+    ( ["Widget", -underline => 0]
+     ,["Text",       [$eva, "ApplyAndPush", "Text"]]
+     ,["RefListbox", [$eva, "ApplyAndPush", "RefListbox"]]
+    );
+  $eva;
+
+=item [4] To add SearchEntry.
+
+  my $eva = shift;
+  $eva->SearchEntry;
+
+=item [5] To Eval external file under EVA.
+
+  my $eva = shift;
+  my $widget_demo = `which widget`;
+  $eva->EvalFile( $widget_demo );
+
+Note: If you choose B<Quit> button in widget-demo, then B<EVA>
+also Quit.
+
+=back
+
+=head1 MISC
+
+=head2 To Customize EVA.
+
+EVA reads your F<$ENV{HOME}/.eva/rc.pm>, if it exists.  And then
+Eval it with ARG[0] = B<EVA itself>. Same mechanism in above
+EXAMPLE is available. For example:
+
+   # First of all, name your EVA as $eva
+   my $eva = shift;
+
+   # set helpDirectory for TkHTML
+   $eva->configure(-helpDirectory => "$ENV{HOME}/Tk-b9.01/doc"); 
+
+   # set CPAN site.
+   $eva->configure(-nearest_cpan =>
+		   "ftp://ftp.lab.kdd.co.jp/lang/perl/CPAN/");
+
+   # Modify key bind for text widget.
+   my $text = $eva->Subwidget('scratch');
+   #
+   $text->bind(ref $text, '<Control-s>', [$eva, 'Save']);
+
+If you want to use other fileselector, i.e. F<'Tk::SelFile'>,
+put these line to your F<.eva/rc.pm>:
+
+  {package Tk::SelFileProxy;
+   require Tk::SelFile;
+   @ISA= qw(Tk::SelFile);
+   *Evaluator::EVA::FileSelect
+     = sub {
+       bless &Tk::Widget::SelFile(shift), 'Tk::SelFileProxy';
+       };
+   sub show {
+     my $fs = shift;
+     my ($opcode, $filename) = &Tk::SelFile::show($fs);
+     return $filename;
+   }
+  }
+
+
+=head2 Reason of Naming
+
+=over 2
+
+=item [1] 'evaluator' is too long. 'eval' conflicts shell-builtin.
+
+So, I truncate 'l' from 'eval'.
+
+=item [2] Taken from a name of robot in I<'Neon Genesis, Evangelion'>,
+
+a TV program (95, Sep to 96, Mar) in Japan. That was one of the most
+exciting Japanimation (Japanese Animation). See:
+F<http://www.stellar.co.jp/GAINAX/index-e.html>
+
+=back
+
+=head1 BUGS
+
+Not enough documented.
+
+Destroyed widgets still remain on the stack.
+
+This POD & source of EVA itself may contain some (or many :-<)
+incorrect "English". If you find it, please correct me.
+
+In Tk-b8, I<FindMethods> in I<Inspect> menu cause infinite
+B<Background Error> like this:
+
+  Background Error: Undefined subroutine &Tk::Wm::AUTOLOAD
+       called at /usr/local/lib/perl5/Tk/ErrorDialog.pm line 121.
+
+Built-in tkweb, tkhtml, tkpod support still have I<many> problems.
+
+
+=head1 TO-DO
+
+Support of B<'Operation History'>.
+
+Support of B<Undo> on L<STACK>. Sophisticated user-interface to
+manipulate stacks.  Something like 'LAST-X(in HP RPN calc)' may
+be useful.
+
+Consistent framework to dance with many other usefull-modules in
+CPAN. i.e. News::NNTPClient, Net::FTP, libwww, ...
+
+'Incremental-Search', 'Replace', 'Completion/Dynamic-abbrev', '
+Mark-ring', ... many other good stuff to support rapid
+coding. (But, are there someone working on these topics?)
+
+'Saving-modified-Text before B<any> destruction'.
+
+Support for development of 'Composite' widget.
+
+Support for B<tag> of Tk::Text & Tk::Canvas.
+
+Support for B<bind>.
+
+Support for %SIG.
+
+Support for alternative Pretty-printer/data-dumper.
+
+Support for pragma, i.e.'use strict "subs", "vars", "refs"',
+'use English', ... 
+
+Co-operatability with perl-debugger.
+
+More refinement for internal codes.
+ (Tk::Widget::AddMenu will be changed.)
+
+=head1 AUTHOR
+
+KOBAYASI Hiroaki -- hkoba@t3.rim.or.jp --
+
+   in Japanese, 小林 弘明 -- h小林＠第3東京.リムネット --
+     これが私の_『ほとばしる熱いパトス』ってやつです
+
+You can get recent version of EVA from:
+F<http://www.t3.rim.or.jp/~hkoba/ptk/eva/>
+
+Any comments, suggestions and requests are welcome.
+
+=cut
+
+use File::Basename;
+use lib dirname($0);
+package Evaluator::EVA;
+########### EVA 初号機 (sorry, this is Japanese)##############
+BEGIN {
+  if (-d "./blib") {
+    # If current directory has './blib' directory,
+    # EVA assumes we are in 'development directory'
+    # and prepend it to @INC.
+    require blib and import blib;
+  }
+  if (-d "$0.lib") {
+    require lib and import lib "$0.lib";
+  }
+  if (-d "$ENV{HOME}/.eva/lib") {
+    unshift(@INC, "$ENV{HOME}/.eva/lib");
+  }
+}
+require 5.002;
+use strict;
+use Carp;
+use Config;
+use Benchmark;
+# use POSIX; setlocale(LC_CTYPE, "C");
+use Tk;
+#use Tk::Pretty;
+use Tk::Pretty::SelfRef;
+require Tk::ErrorDialog;
+require Tk::Widget::AddMenu;
+require Tk::RefListbox;
+require Tk::FileSelect;
+require Tk::Menubar;
+use Tk::Menubutton;
+
+{ no strict 'vars';
+  @ISA = qw(Tk::Frame);
+  Tk::Widget->Construct('Evaluator');
+# ci -r1.1  eva < messagefile
+# co -l  eva
+# # modify it
+# ci -r1.1.1 eva < messagefile
+# rcs -b1.1.1
+# rcs -u1.0.1 -u1.1
+## Warning killer.
+  $version = 
+    q$Id: eva,v 1.1 2006/05/18 06:19:35 hkoba Exp $;
+  $id ||= undef;
+  ($id) = $version =~ m/eva,v (\d)\./;
+
+# 再定義してやる！
+#  BEGIN { undef *Tk::Derived::Component };
+# sub Tk::Derived::Component
+# {
+#  my ($cw,$kind,$name,%args) = @_;
+#  $args{'Name'} = "\l$name" if (defined $name && !exists $args{'Name'});
+#  my $pack = delete $args{'-pack'};
+#  my $delegate = delete $args{'-delegate'};
+#  my $w = $cw->$kind(%args);            # Create it
+#  if (defined $pack) {
+#    if ($w->isa('Tk::Widget')) {
+#      $w->pack(@$pack);
+#    } else {
+#      print STDERR "Not a widget, Can't pack: $w\n" if $ENV{VERBOSE};
+#    }
+#  }
+#  $cw->Advertise($name,$w) if (defined $name);
+#  $cw->Delegates(map(($_ => $w),@$delegate)) if (defined $delegate); 
+#  return $w;                            # and return it
+# }
+}
+
+my $OS = $Config::Config{'osname'};
+
+sub new {
+  my $pkg = shift;
+  my $eva = $pkg->SUPER::new(@_);
+
+  #### To allow per-user customization. ####
+  my $rcfile = "$ENV{HOME}/.eva/rc.pm";
+  if ( -r $rcfile ) {
+    # my $pack = $eva->Package;
+    # $eva->Package('Evaluator::EVA');
+    $eva->{"Echo"} = 0;
+    $eva->EvalFile($rcfile, $eva); # prog, target-obj.
+    $eva->{"Echo"} = 1;
+    # $eva->Package($pack);
+  }
+  $eva->SetTag;
+  $eva;
+}
+sub Populate {
+  my ($eva, $args) = @_;
+  print "$eva Populate start.\n" if $ENV{VERBOSE};;
+  $eva->SUPER::Populate($args);
+  print "$eva SUPER::Populate end.\n" if $ENV{VERBOSE};
+  # Default Options. Some of these should be moved to ConfigSpecs.
+  map(($eva->{$_->[0]} = $_->[1])
+      ,["Context"   => '@']
+      ,["Package"   => "main" ]
+      ,["PkgList"   => ["main", "Evaluator::EVA"] ]
+      ,["Echo"      => 1      ]
+      ,["UsePretty" => 1      ]
+      ,["Debug"     => 0      ]
+      ,["EvalTag"   => "eval" ]
+      ,["MarkerStr" => "; "   ]
+      ,["ViewStack" => undef  ]
+      ,['Targets'   => [ ]    ]
+      ,['Args'      => [ ]    ]
+      );
+
+  #### Menubar ####
+  print "$eva adding component menubar.\n" if $ENV{VERBOSE};;
+#  my $mbar = $eva->Component(Menubar => 'stdmenu',
+#			     -relief => 'raised', -bd => 1,
+#			     "-pack" => [-side=>'top',-fill =>'x'],
+#			    );
+#  $mbar->pack(-side=>'top',-fill =>'x');
+  my $mbar = $eva->MainWindow->Component(Menu => 'stdmenu');
+  $eva->MainWindow->configure(-menu => $mbar);
+
+  print "$eva Addm start.\n" if $ENV{VERBOSE};
+  ## Eval ##
+  $mbar->AddMenu
+    ( ["Eval", -underline => 0]
+     ,["Evaluate Selection"   =>  [$eva, "EvalSelection"  ]]
+     => "------------------------------"
+     ,["Eval Whole Buffer"    =>  [$eva, "EvalWholeBuffer"]] 
+     ,["Eval File ..."        =>  [$eva, "EvalFile"       ]]
+     => "------------------------------"
+     => 'checkbutton'
+     ,["View Stack"     => \$eva->{"ViewStack"}
+       , -command => [$eva, "ViewStack"      ]]
+     => "------------------------------"
+     => "cascade"
+     ,[  ["Echo Settings", -underline => 0]
+       => "checkbutton"
+       , [ "Echo"    => \$eva->{"Echo"}]
+       , [ "Pretty"  => \$eva->{"UsePretty"}]
+       , [ "Debug"   => \$eva->{"Debug"}]
+       ]
+     => "radiobutton" , -variable => \$eva->{"Context"}
+     , ["ARRAY  Context", '@'  ]
+     , ["SCALAR Context", "\$" ]
+    );
+
+  print "$eva Addm next.\n" if $ENV{VERBOSE};;
+
+  ## File ##
+  $mbar->AddMenu
+    ( ["File", -underline => 0]
+     ,["Open ..."  =>   [$eva, "OpenFile" ]]
+     ,["New"   =>       [\&main::EVA      ]]
+     ,["Save"  =>       [$eva, "Save"     ], -accelerator => "Alt+s"]
+     ,["Save as ..."  =>[$eva, "SaveAs"   ]]
+     => "separator"
+     ,[" Grep "    => [$eva, '_add_grep'],  -accelerator => 'Control+g']
+     ,[" Search "  => [$eva, '_add_search'],-accelerator => 'Control+s'] 
+     => 'separator'
+     => "cascade"
+     =>[["Quit"]
+	,["Quit"  =>   [$eva, "Quit"     ]]
+	,["Quit ALL" => \&QuitAll         ]
+	]
+    );
+
+  $mbar->AddMenu
+    (["Push", -underline => 0]
+     ,["Selection(No Eval)" => [$eva, "PushSelection"  ]]
+     ,["Current Directory"  => sub { $eva->Target($eva->Directory) }]
+     ,'--------'
+     , 'cascade'
+     => [[ "New Widgets" ]
+	 ,["MainWindow"         => sub {$eva->Target(MainWindow->new)}]
+	 ,["FileSelector"       => sub {$eva->Target($eva->FileSelect)}]
+	]
+     , 'cascade'
+     => [["Existing Widgets"]
+	 ,["ALL MainWindow"     =>
+	   sub { $eva->Clear; $eva->PushWidgets($eva->MainWindow->Existing)} ]
+	 ,["ALL TkPod"     =>
+	   sub { $eva->Clear; $eva->PushWidgets(@Evaluator::EVA::tkpod)} ]
+	 ,["ALL TkHTML"     =>
+	   sub { $eva->Clear; $eva->PushWidgets(@Evaluator::EVA::tkhtml)} ]
+	 ,["ALL TkWeb "     =>
+	   sub { $eva->Clear; $eva->PushWidgets(@Evaluator::EVA::tkweb)} ]
+	]
+     ,'--------'
+     ,[ "Up-to-date stack"  => [$eva, "Refresh"]]
+     ,'--------'
+     ,["EVA itself"         => [$eva, "Target",$eva   ]]
+    );
+
+
+  ## Inspector methods ##
+  $mbar->AddMenu
+    ( ["Inspect", -underline => 0]
+     ,["ref(\$ARG[0])"  => [$eva, 'ApplyAndPush', sub {ref(shift);}]]
+     ,["Find ISA Hierarchy(\$ARG[0])" =>
+       # selected object would be better.
+       sub { $eva->Clear;
+	     $eva->Push(@{ $eva->FindISAHierarchy( $eva->Target )} );
+	   }
+      ]
+     ,["is overloaded?"       => [$eva, 'ApplyAndPush', sub {_is_overloaded(shift);}]]
+     ,["hash? array? scalar?" => [$eva, 'ApplyAndPush', sub {_type(shift);}]]
+     ,["FindMethods(\$ARG[0])" =>
+       # selected object should be better.
+       sub { $eva->Clear;
+	     my $found = $eva->FindMethods( $eva->Target );
+	     $eva->Push(map { [$_, $found->{$_}] } sort keys %$found);
+	   }
+      ]
+     ,'------'
+     ,"cascade"
+     => [ [ "Configuration"]
+	  ,["\$ARG[0]->configure" =>
+	    [$eva, "ApplyAndPush",
+	     sub { no strict 'vars';
+		   sort {$a->[0] cmp $b->[0]} shift->configure;}]
+	   ]
+	  ,["\$ARG[0]->ConfigSpecs" =>
+	    [$eva, "ApplyWOArgsAndPush", "ConfigSpecs"]
+	   ]
+	  ,'--------'
+	  ,["\$ARG[0]->bindtags" =>
+	    [$eva, "ApplyWOArgsAndPush", 'bindtags']
+	   ]
+	  ,'--------'
+	  ,["\$ARG[0]->packInfo" =>
+	    [$eva, "ApplyWOArgsAndPush", 'packInfo']
+	   ]
+	  ,["\$ARG[0]->packSlaves" =>
+	    [$eva, "ApplyWOArgsAndPush", 'packSlaves']
+	   ]
+	  ]
+     ,"cascade"
+     => [ [ "Widget Hierachy"]
+	  ,["\$ARG[0]->MainWindow" =>
+	    [$eva, "ApplyWOArgsAndPush", 'MainWindow']
+	   ]
+	  ,["\$ARG[0]->parent" =>
+	    [$eva, "ApplyWOArgsAndPush", 'parent']
+	   ]
+	  ,'----'
+	  ,["\$ARG[0]->PathName" =>
+	    [$eva, "ApplyWOArgsAndPush", "PathName"]
+	   ]
+	  ,'----'
+	  ,["\$ARG[0]->Subwidget" =>
+	    [$eva, "ApplyWOArgsAndPush", "SubWidgetsWithName"]
+	   ]
+	  ,["\$ARG[0]->children" =>
+	    [$eva, "ApplyWOArgsAndPush", 'children']
+	   ]
+	  ,["\$ARG[0]->Descendants" =>
+	    [$eva, "ApplyWOArgsAndPush", 'Descendants']
+	   ]
+	]
+     ,'--------'
+      => 'cascade'
+     ,[["Text"]
+       ,["\$ARG[0]->tag(names)"
+	 => [$eva, "ApplyWOArgsAndPush", 'tag', 'names']]
+       ,["\$ARG[0]->tag(ranges, \$ARG[1])"
+	 => [$eva, "ApplyAndPush" => sub {
+	   my $text = shift;
+	   map { [$_, [$text->tag('ranges', $_)]] }
+	   grep{ !ref $_ } @_;
+	 }]]
+       ,["\$ARG[0]->tag(configure, \$ARG[1])"
+	 => [$eva, "ApplyAndPush" => sub {
+	   my $text = shift;
+	   map { [$_, [$text->tag('configure', $_)]] }
+	   grep{ !ref $_ } @_;
+	 }]]
+       ,'-----'
+       ,["\$ARG[0]->tag(add => shift, \$ARG[0]->tag(range => 'sel')"
+	 => [$eva, 'ApplyAndPush' => sub {
+	   my ($text, $tag) = @_;
+	   $text->tag('add' => $tag, $text->tag('range' => 'sel'));
+	 }]]
+      ]
+      => 'cascade'
+     ,[ ["Canvas"]
+       ,[" all items & tags "
+	 => [$eva, "ApplyWOArgsAndPush" =>
+	     sub {
+	       my ($canvas) = shift;
+	       map {[$_, $canvas->type($_), $canvas->gettags($_)]}
+	       $canvas->find('all');
+	     }]]
+       ,'-------'
+       ,["\$eva->bindPushPlot(\$ARG[0])"
+	 => [$eva, 'bindPushPlot']]
+       ,["\$ARG[0]->create(polygon => \@ARG[1..N])"
+	 => [$eva, "ApplyAndPush",
+	     sub { shift->create(polygon => @_)} ]]
+       ]
+    );
+
+  ## Idioms ##
+  $mbar->AddMenu
+    ( ["Misc", -underline => 0]
+       ,["\$w->ColorEditor(-widgets => [ \@ARG[1..N] ])" =>
+	 sub {
+	   require Tk::ColorEditor;
+	   my @widgets = $eva->Args;
+	   @widgets = $eva->Target    if ! @widgets;
+	   @widgets = $eva->Subwidget if ! @widgets;
+	   my $ce = $eva->ColorEditor
+	     (-title => "EVA's color", -widgets => [ @widgets ]);
+	   $eva->Target($ce); # Is this good?
+	   $ce->Show;
+	 }]
+     ,'------'
+     ,["\$ARG[0]->pack(-fill => 'both', -expand => 1)" =>
+       [$eva, "ApplyAndIgnoreResult",
+        sub {shift->pack(-fill=>"both", -expand => 1)}
+       ]]
+     ,["\$ARG[0]->WithScrollbars" =>
+       [$eva, "ApplyAndPush", 'WithScrollbars', "rse"]
+       ]
+    );
+
+  #
+  my $pkglist = $mbar->Optionmenu
+    (-textvariable => \$eva->{"Package"},
+     -options => ["main", "Evaluator::EVA"],
+     -relief => "sunken", -bd => 2);
+  $pkglist->pack(-side => "left", -fill => "y");
+  #
+  $mbar->AddMenu
+    ( ["package:"
+       ,"-pack" => [-side => "left", -before => $pkglist]
+       ,-side => "left"
+       ,-before => $pkglist
+      ]
+     ,["get from Selection" => 
+       sub {
+	 my $pack = $eva->SelectionGet;
+	 unless ( grep { $_ eq $pack } @{ $eva->{"PkgList"} }) {
+	   push @{ $eva->{"PkgList"} }, $pack;
+	   $pkglist->options( [$pack] );
+	   $pkglist->setOption($pack);
+	 }
+       }]
+     # gensym (for unique package name) should be provided.
+     # If browser for %main:: exists, is that useful?
+     );
+
+  ## Help ##
+  $mbar->AddMenu
+    ( ["Help", -underline => 0
+       ,"-pack" => [-side => 'right','-anchor' => 'e']
+       ,-side => 'right'
+       #,'-anchor' => 'e'
+      ]
+     ,["Pod: EVA"           => [ $eva, "tkpod", $0]]
+     ,'--------'
+     ,["Pod: perl"          => [ $eva, "tkpod", "perl"]]
+     => 'cascade'
+     ,[ ["Pod: perl/Tk"]
+       ,["Tk/UserGuide.pod" => [$eva,"tkpod","Tk/UserGuide.pod"]]
+       ,["Tk/Tk.pod"        => [$eva,"tkpod","Tk/Tk.pod"]]
+       ,["Tk/Callback.pod"  => [$eva,"tkpod","Tk/Callback.pod"]]
+       ,["Tk/Tcl-perl.pod"  => [$eva,"tkpod","Tk/Tcl-perl.pod"]]
+       ,'------'
+       ,["Tk/Composite.pod" => [$eva,"tkpod","Tk/Composite.pod"]]
+       ,["Tk/ConfigSpec.pod"=> [$eva,"tkpod","Tk/ConfigSpec.pod"]]
+       ,'------'       
+       ,["Tk/pTk.pod"       => [$eva,"tkpod","Tk/pTk.pod"]]
+       ,["Tk/Internals.pod" => [$eva,"tkpod","Tk/Internals.pod"]]
+       ]
+     ,["Pod: (selection)"   => [$eva, "tkpod"]]
+     ,["Pod: (this file)"   => sub { $eva->tkpod($eva->Filename); }]
+     ,'-------'
+     ,[" TkHTML ... " => [ $eva, "tkhtml" ]]
+     =>'cascade'
+      ,[[" TkWeb  "]
+	,["Perl/Tk FAQ(ptkFAQ) " =>
+	  [ $eva, "tkweb",
+	    'http://w4.lns.cornell.edu/~pvhp/ptk/ptkFAQ.html' ]]
+	,["Perl Data Structure Cookbook(PDSC)" =>
+	  [ $eva, "tkweb", 'http://perl.com/perl/pdsc/' ]]
+	,["CPAN" => sub {
+	  my $cpan = $eva->cget(-nearest_cpan);
+	  $cpan ||= 'ftp://ftp.cis.ufl.edu/pub/perl/CPAN/';
+	  $eva->tkweb($cpan);
+	}]
+	,[" ModuleList" => sub {
+	  my $cpan = $eva->cget(-nearest_cpan);
+	  $cpan ||= 'ftp://ftp.cis.ufl.edu/pub/perl/CPAN/';
+	  $eva->tkweb("$cpan/modules/00modlist.long.html");
+	}]
+	]
+     ,'-------'
+     =>'cascade'
+      ,[[" Grep "]
+	,map {[" in $_ ", [$eva, '_grep', $_]]}
+	"$Config::Config{installprivlib}/pod"
+	,$Tk::library
+	,@INC
+	]
+     ,[' widget demo '
+       => [$eva, 'EvalFile', "$Config::Config{installscript}/widget"]
+     ]
+    );
+
+#  ### User Menu ###
+#  $eva->Component(Menu => 'UserMenu',
+#		  -relief => 'raised', -bd => 1,
+#		  "-pack" => [-side=>'top',-fill =>'x', '-after' => $mbar],
+#		 );
+#  $eva->Subwidget('UserMenu')
+#    ->pack(-side=>'top', -fill =>'x', '-after' => $mbar);
+ 
+  #### Text widget ####
+  my $tf = $eva->Frame;
+  $tf->pack(-fill => "both", -expand => 1);
+  my $text;
+  require Tk::TextUndo;
+  $text = $tf->TextUndo
+    (-font => 'a14' # -misc-*-medium-*-*--14-*-*-*-*-*-iso8859-1
+    )->WithScrollbars('re');
+
+  $eva->Advertise('scratch', $text);
+  $text->bindtags(['traverse', $text->bindtags]);
+  ### AddMenu supplies this 'traverse' tag.
+
+  $text->pack(-fill=>"both", -expand => 1);
+
+  $text->bind(ref $text, '<Control-Return>',[$eva, "Commit"]);
+  $text->bind(ref $text, '<Control-space>', [$eva, "SetTag"]);
+# $text->bind(ref $text, '<Tab>',           [$eva, "Expand"]);
+  $text->tag(configure => 'eval',   -borderwidth => 1,
+	     -relief   => 'sunken', -background  => 'SeaGreen3');
+  $text->tag(configure => 'button', -borderwidth => 1,
+	     -relief   => 'raised', -background  => 'honeydew');
+  $text->tag(lower => 'button', 'sel');
+
+  $eva->ConfigSpecs
+    (-target     =>['PASSIVE', undef, undef, $eva->parent]
+     ,-directory =>['PASSIVE', undef, undef, $ENV{'PWD'} || "."]
+     ,-nearest_cpan=>['PASSIVE', undef, undef,
+		      'ftp://ftp.cis.ufl.edu/pub/perl/CPAN/']
+     ,-helpDirectory => ['PASSIVE', undef, undef, $ENV{'PWD'} || "."]
+    );
+
+  ###  Default delegation.
+  $eva->Default(scratch => $text);
+
+  return $eva;
+}
+sub _grep {
+  my ($eva, $dir) = @_;
+  my $mw = MainWindow->new;
+  $mw->GrepEntry( -directory => $dir);
+  $mw->title( $dir );
+  $mw->iconname("grep:" .
+		( $dir =~ m|( [^/]+$ )|xg )[0]);
+}
+sub _add_search {
+  my $eva = shift;
+  my $search = $eva->Subwidget('search');
+  if (!$search) {
+    $search = $eva->SearchEntry;
+    $eva->Advertise('search', $search);
+  }
+  $search->Subwidget('entry')->focus;
+}
+sub _add_grep {
+  my $eva = shift;
+  my $grep = $eva->Subwidget('grep');
+  if (!$grep) {
+    $grep = Tk::GrepEntry->new($eva, -directory => $eva);
+    $eva->Advertise('grep', $grep);
+  }
+  $grep->Subwidget('entry')->focus;
+}
+### for Canvas. 
+sub PushPlot {
+  my ($eva, $canvas) = @_;
+  my $e = $canvas->XEvent;
+  require Tk::Canvas;
+  $eva->Push($e->x, $e->y) if defined $e;
+}
+sub bindPushPlot {
+  my $eva = shift;
+  my $canvas = $eva->Target;
+  require Tk::Canvas;
+  $eva->BackTrace("target($canvas) is not Canvas!")
+    unless $canvas->IsCanvas;
+  $canvas->Tk::bind('EVA', '<1>', [$eva, 'PushPlot', $canvas]);
+  $canvas->bindtags(['EVA', grep {!/^EVA$/} $canvas->bindtags]);
+}
+#### ARGV viewer ####
+sub OpenScalar {
+  my ($eva, $string) = @_;
+  ## Should allow user-customization! In next release, it will.
+  # Should handle tkweb, tkpod, & other prog.
+  $string =~ s/^\s*//;
+  return if $string =~ tr/\n/\n/;
+  if ( $string =~ m! ^\w+:[^:] | ^<URL: ([^>]+) >!x ) {
+    $string = $1 if defined $1;
+
+    # URL?
+    # ... under construction. In the near future, this will be 
+    #     merged to webget or tkweb.
+      
+    require Tk::Web;
+    require LWP::TkIO or $eva->BackTrace(<<"END");
+You don\'t have the module LWP::TkIO
+You need: <ANY-CPAN>/modules/by-module/LWP/libwww-perl-5b8.tar.gz
+or later version.
+END
+    require LWP::UserAgent;
+    require URI::URL;
+    #
+    my $url = eval {URI::URL->new($string, URI::URL->newlocal)};
+    $eva->Target($url) and return if $url;
+  }
+  my $dir  = $eva->Directory;
+  my $path = $string =~ m{^/} ? $string : "$dir/$string";
+  {
+    # path normalizer.
+    $path =~ s|/+|/|g;
+    1 while $path =~ s|           /  \.$  |/|x;
+    1 while $path =~ s| (/[^/]+)? /  \.\. |/|gx;
+  }
+  if (!-r $path and $string !~ m|^/|) {
+    # may be a relative path or module-name.
+    my $ext;
+    foreach $ext (".pm", "") {
+      # URI/URL.pm <--> URI/URL/
+      $path = "$path$ext" and last if -r "$path$ext";
+      my $inc = Tk::findINC("$string$ext");
+      $path = $inc and last if defined $inc and -r $inc;
+    }
+  }
+  if (-d $path) {
+    $eva->Remember($path) if $dir ne $path;
+    chdir($path);
+    $eva->OpenDirectory($path);
+  } else {
+    $eva->RaiseOrOpen($path) if defined $path;
+  }
+}
+sub OpenDirectory {
+  my ($eva, $dir) = @_;
+  local(*D);
+  opendir(D, $dir) or $eva->BackTrace("$dir: $!");
+  $eva->Directory($dir);
+  $eva->Clear->Push( sort readdir(D) );
+  # should support another sort, ie -M.
+  closedir(D);
+  $eva;
+}
+sub OpenGlob {
+  my ($eva, $glob) = @_;
+  my @res;
+  no strict 'refs';
+  push @res, \${ $glob } if defined $ { $glob };
+   # to be happy with cperl-mode ----^
+  push @res, \@{ $glob } if defined @{ $glob };
+  push @res, \%{ $glob } if defined %{ $glob };
+  push @res, \&{ $glob } if defined &{ $glob };
+  $eva->Clear->Push( @res );
+  $eva;
+}
+sub OpenReference {
+  # Needs more refinement. Too magical.
+  # You may want to override default behavior.
+  # So, I will prepare customizability in near future release.
+  #
+  # args are ($eva, $sink, $selection)
+
+  my($eva, $sink, $selection) = @_;
+  return unless defined $selection and $selection;
+
+  if (ref \$selection eq 'GLOB') {
+    $eva->OpenGlob($selection);
+    return;
+  }
+  if (!ref $selection) {
+    # $selection is single scalar value.
+    $eva->OpenScalar($selection);
+    return;
+  }
+
+  # $selection is reference.
+  if ($sink->{"NeedRemember"}) {
+    $eva->Remember($selection);
+  }
+
+  # stolen from 'overload.pm'
+  my $type = _type($selection);
+  if ($type eq 'HASH'
+      && do {
+	exists $selection->{"_Tcl_CmdInfo_\0"} or
+	  eval {# ここを変えた。
+		UNIVERSAL::isa($selection, "Tk")
+		  and $selection->IsWidget } }) {
+    my @res;
+    @res = $selection->SubWidgetsWithName;
+    @res = $selection->children           if ! @res;
+    @res = $selection->configure          if ! @res;
+    $sink->Clear->insert(end => @res)     if @res;
+
+  } elsif ($type eq 'REF' or $type eq 'SCALAR') {
+    $sink->Clear->insert(end => $$selection);
+
+  } elsif (eval { $selection->isa("URI::URL") }) {
+    $eva->tkweb($selection);
+  } elsif (ref $selection eq 'Tk::IO') {
+    $sink->Clear->insert(end => $selection->configure);
+
+  } elsif ( $type eq 'ARRAY') {
+    $sink->Clear->insert(end => @$selection);
+
+  } elsif ( $type eq 'HASH') {
+    $sink->Clear->insert
+      (end => map { [$_, $selection->{$_}] } sort keys %$selection);
+
+  } else {
+    # What ?
+    $eva->BackTrace("Can't open: '$selection'");
+  }
+}
+sub _is_overloaded {
+  my $obj = shift;
+  no strict 'refs';
+  local( *PKG:: ) = \%{ ref($obj) .'::' };
+  return 0 if ref($obj) eq "Overload::Fake";
+  exists $PKG::{'OVERLOAD'}
+  && defined %{ref($obj) . '::OVERLOAD'};
+}
+sub _type {
+  # careful version of overload::AddrRef
+  my $obj = shift;
+  my $type;
+  # to avoid corruption of %PKG::
+  if (_is_overloaded($obj)) {
+    # overloaded.
+    my $package = ref $obj;
+    bless $obj, 'Overload::Fake'; # Non-overloaded package
+    my $str = "$obj";
+    bless $obj, $package;         # Back
+    ($type) = $str =~ m/(\w+)\(/g;
+  } else {
+    # Not overloaded.
+    ($type) = $obj =~ m/(\w+)\(/g;
+  }
+  return $type;
+}
+
+%Overload::Fake::OVERLOAD = qw(fallback 1);
+# To avoid bug around overload...
+# use subs qw(_no_overload);
+sub _no_overload (&@) {
+  my $code = shift;
+  # print "orig: ", Pretty(@_),"\n";
+  my ($obj, @fake);
+  foreach $obj (@_) {
+    if (_is_obj($obj) and _is_overloaded($obj)) {
+      push @fake, [ref $obj, $obj];
+    } else {
+      push @fake, [undef, $obj];
+    }
+  }
+  my $pair;
+  foreach $pair (@fake) {
+    bless $pair->[1], "Overload::Fake" if $pair->[0];
+  }
+  my ($result, @result);
+  if (wantarray) {
+    @result = eval { &$code( map {$_->[1]} @fake) };
+  } else {
+    $result = eval { &$code( map {$_->[1]} @fake) };
+  }
+  my $error = $@;
+  foreach $pair (@fake) {
+    bless $pair->[1], $pair->[0] if $pair->[0];
+  }
+  # print "done: ", Pretty(@_),"\n";
+  die $error if $error;
+  wantarray ? @result : $result;
+}
+sub Tk::Widget::SubWidgetsWithName {
+  my $w = shift;
+  if (exists $w->{'SubWidget'} and ref $w->{'SubWidget'} ) {
+    my $h = $w->{'SubWidget'};
+    map { [$_ => $h->{$_}] } sort keys %$h;
+  } else {
+    ()
+  }
+}
+
+sub FindMethods {
+# depth first, pre-order search of 'sub'.
+# In the real sense, this should be called 'Findsubs'.
+  no strict 'refs';
+  my ($eva, $obj, $visited, $found) = @_;
+  $visited ||= {};
+  $found   ||= {};
+  my $class = ref($obj) ? ref($obj) : $obj;
+  $visited->{$class} = 1;
+  local( *PKG:: ) = \%{ $class ."::" };
+  my $name;
+  foreach $name ( keys %PKG:: ) {
+    $found->{$name} = $class
+      if defined &{ $class . "::$name" } && ! exists $found->{$name};
+  }
+  if (exists $PKG::{'ISA'} && defined @{ $class . "::ISA" }) {
+    my $super;
+    foreach $super ( @{ $class . "::ISA" } ) {
+      $eva->FindMethods($super, $visited, $found)
+	if ! exists $visited->{$super};
+    }
+  }
+  $found;
+}
+sub FindISAHierarchy {
+  no strict 'refs';
+  my($eva, $obj, $found) = @_;
+  $found   ||= [];
+
+  my $class = ref($obj) ? ref($obj) : $obj;
+  local( *PKG:: ) = \%{ $class ."::" };
+
+  my @SuperS = ();
+  if (exists $PKG::{'ISA'} && defined @{ $class . "::ISA" }) {
+    @SuperS = @{ $class . "::ISA" };
+  }
+  my $super;
+  foreach $super ( @SuperS ) {
+      $eva->FindISAHierarchy($super,  $found)
+	if ! grep { $_ eq $super } @$found;
+  }
+  unshift @{$found}, [$class, [@SuperS]];
+  $found;
+}
+
+sub PasteReference {
+  # print "<<@_>>\n";
+  my ($list, $reflist, $eva) = @_;
+  # Ad hoc threshold.
+  return if  $Tk::mouseMoved > 2;
+  
+  my $owner = $list->SelectionOwner;
+  # Real owner is listbox. So retrieve ->parent.
+  # print "Targ($reflist)<Owner=",$owner , ">\n";
+  if (defined $owner
+      and eval { $owner->parent->IsRefListbox }) {
+    # Arg -> Target.
+    # Treat ref as ref.
+    my @sel = $owner->parent->Getselected;
+    if (@sel) {
+      if ( @sel == 1 ) {
+	$reflist->insert(0 => $sel[0]);
+      } else {
+	$reflist->insert(0 => [@sel]);
+      }
+    }
+  } else {
+    # normal string.
+    my $string = eval { $reflist->SelectionGet };
+    if (defined $string) {
+      # $reflist->delete(0, "end"); # too much.
+      $reflist->insert(0 => $string); # Don't split.
+    }
+  }
+}
+sub ViewStack {
+  # Too mess!
+  my $eva = shift;
+  if ( ! defined $eva->Subwidget('Targets') ) {
+    #my $sf = $eva->Component(Frame => 'FrameOfStackViewer');
+    my $sf = Tk::Frame->new($eva);
+    $eva->Advertise('FrameOfStackViewer' => $sf);
+
+    my $lf = $sf->Frame;
+    $lf->pack(-side => 'top', -fill =>"both", -expand => 1);
+    foreach ( ['Targets', '$ARG[0]',      'browse'  ]
+	     ,['Args',    '@ARG[1 .. N]', 'extended']) {
+      
+      my $l = $lf->RefListbox
+	(-stringify => sub { my $str = &Pretty(@_); $str =~ tr/\0//d; $str },
+	 -scrollbars => 're',
+	 -height     => 12,
+	 -scrollbarwidth => 10,
+	 -update     => 8,
+	 -variable   => $eva->{$_->[0]},
+	 -label      =>        $_->[1],
+	 -selectmode =>        $_->[2],
+	);
+      $eva->Advertise( $_->[0] , $l);
+      $l->pack(-fill => 'both', -expand => 1, -side => "left");
+      $l->bind('<1>', sub { shift->focus });
+      $l->bind('<2>', sub { $Tk::mouseMoved = 0; });
+      $l->bind('<B2-Motion>', sub { $Tk::mouseMoved ++; });
+      $l->bind("<ButtonRelease-2>", [\&PasteReference, $l]);
+      # my @btags = $l->bindtags;
+      # $l->bindtags([ $btags[0], 'Tk::Listbox', @btags[1 .. $#btags] ]);
+    }
+    my @l = map {$eva->Subwidget($_)} qw( Targets Args );
+    $l[0]->configure(-opencommand => [$eva,'OpenReference', $l[1]]);
+    # open on 'Target' is not backuped.
+    $l[1]->configure(-opencommand => [$eva,'OpenReference', $l[1]]);
+    $l[1]->{"NeedRemember"} = 1;
+    # open on 'Args' is backuped.
+
+    my $bf = $sf->Frame;
+    $bf->pack( qw(-side top -fill x -expand 1 -ipady 3 ) );
+
+    map { $_->pack( qw(-fill x -expand 1 -side left) ) }
+    map { $bf->Button(-text => $_->[0], -command => $_->[1]) }
+    (
+      [ "Drop from stack"
+       ,sub { $eva->Subwidget('Targets')->delete(0); }]
+     ,[ "Delete Selected"
+       ,sub { $eva->Subwidget('Args')->deleteSelection; }]
+     # should be 'deleteSelected'.
+    );
+
+  }
+  # toggle
+  my $flag = shift;
+  if ($flag or $eva->{'ViewStack'}) {
+    $eva->{'ViewStack'} = 1;
+    # show
+    #
+    my $textframe = $eva->Subwidget('scratch')->parent;
+    $eva->Subwidget('FrameOfStackViewer')
+      ->pack(-in => $eva, -before => $textframe,
+	     -fill =>"both", -expand => 0);
+  } else {
+    # hide
+    #
+    $eva->Subwidget('FrameOfStackViewer')
+      ->pack('forget');
+  }
+  $eva->Refresh;
+  $eva;
+}
+
+sub Refresh {
+  my $eva = shift;
+  map {$_->Refresh} map {$eva->Subwidget($_)} 'Targets', 'Args';
+}
+sub Target {
+  my $eva = shift;
+  my $list = $eva->Subwidget("Targets");
+  my $target;
+  shift until defined $_[0] or ! @_;
+  if (! @_ ) {
+    # fetch
+    #
+    if (defined $list) {
+      $target = $list->Getselected || $list->get(0);
+    } else {
+      $target = $eva->{"Targets"}->[0];
+    }
+    return $target;
+  } else {
+    # store
+    #
+    if (defined $list) {
+      $list->insert(0, shift);
+      $list->selection(clear => 0, 'end');
+      $list->selection(set => 0);
+    } else {
+      unshift @{ $eva->{"Targets"}; } , shift;
+    }
+    return $eva;
+  }
+}
+sub Args {
+  my $eva = shift;
+  my $args = $eva->Subwidget("Args");
+  my @res;
+  if (defined $args) {
+    @res = $args->Getselected;
+    @res = $args->get(0, 'end') if ! @res;
+  } else {
+    @res = $eva->{'Args'}->[0];
+  }
+  return wantarray ? @res : $res[0] ;
+}
+sub Clear {
+  my $eva = shift;
+  my $args = $eva->Subwidget("Args");
+  $args->delete(0, 'end') if defined $args;
+  $eva;
+}
+sub Remember {
+  my ($eva, $new) = @_;
+  my $old = $eva->Target;
+  $eva->Target( $new ) if _no_dup($old, $new);
+}
+sub Push {
+  my $eva = shift;
+  return $eva if !@_;
+  # return $eva if @_ == 1 and !defined $_[0];
+  my $args = $eva->Subwidget("Args");
+  if (defined $args) {
+    $args->insert(0 => @_);
+  } else {
+    unshift @{ $eva->{'Args'} } , @_;
+  }
+  $eva;
+}
+sub PushSelf {
+  my $eva = shift;
+  $eva->Target($eva);
+}
+sub PushSelection {
+  my $eva = shift;
+  my $text = $eva->SelectionGet;
+  if ($text) {
+    $eva->Target($text);
+  }
+}
+sub PushWidgets {
+  my $eva = shift;
+  $eva->Push(grep {exists $_->{"_Tcl_CmdInfo_\0"}
+		   && eval { $_->IsWidget } } @_ );
+}
+#### Keyboard Commands in Scratch buffer ####
+sub GetString {
+  my $eva = shift;
+  my $text= $eva->Subwidget('scratch');
+  my $tag = $eva->{"EvalTag"};
+  my $from = '1.0';
+  eval { $from = $text->index("$tag.last") };
+  my $str = $text->get( $from , 'insert');
+  return $str;
+}
+sub ReplaceString {
+  my $eva = shift;
+  my $text= $eva->Subwidget('scratch');
+  my $tag = $eva->{"EvalTag"};
+  my $from = '1.0';
+  eval { $from = $text->index("$tag.last") };
+  $text->delete( $from, 'insert');
+  $text->insert(insert => shift);
+  $eva;
+}
+sub Commit {
+  my $eva = shift;
+  $eva->EvalWithDefaultArgs( $eva->GetString );
+  $eva->SetTag;
+}
+
+# sub Expand {
+#   # incomplete.
+#   my $eva = shift;
+#   my $string = $eva->GetString;
+#   if(defined $string){
+#     my @cand = grep { /$string/ } <*>;
+#     if (@cand ){
+#       my $text= $eva->ReplaceString( join(" ", @cand) );
+#     }
+#   }
+#   Tk->break;
+# }
+
+#### Apply ####
+sub ApplyWOArgsAndPush {
+  my $eva = shift;
+  $eva->Clear;
+  $eva->ApplyAndPush(@_);
+}
+sub ApplyAndPush {
+  my ($eva, $code) = (shift, shift);
+  my $target = $eva->Target;
+  if (defined $target) {
+    push @_, $eva->Args; # too much?
+    $eva->Clear;
+    my @res;
+    if ( !defined ref $code or ref $code eq "") {
+      # $code may be method-name.
+      eval { @res = $target->$code( @_ ) };
+
+    } elsif ( ref $code eq 'CODE') {
+      eval { @res = &$code($target, @_) };
+
+    } elsif ( ref $code eq 'Tk::Callback' ) {
+      # really? 
+      eval { @res = $code->Call($target, @_) };
+
+    } else {
+      # ??
+      $eva->BackTrace("I don't know How to treat this case: '$code'");
+    }
+    $eva->BackTrace("ApplyAndPush: '$target, $code, @_': $@") if $@;
+
+    $eva->AdHocPushWhenTargetWas($target, \@res);
+  }
+}
+sub ApplyAndIgnoreResult {
+  my ($eva, $code) = @_;
+  my $w = $eva->Target;
+  if (defined $w and eval {$w->IsWidget}) {
+    &$code($w);
+  }
+}
+# sub Command {
+#   # not yet.
+#   my ($eva, %args) = @_;
+#   my $label = $args{-label};
+#   my $prog  = $args{-command};
+# 
+# }
+#### Eval ####
+sub EvalWithDefaultArgs {
+  my ($eva, $prog) = @_;
+  my $target=$eva->Target;
+  my @args = $eva->Args;
+  local($_) = eval {$eva->SelectionGet}; # Is this useful?
+  $eva->ClearErrorInfo;
+  $eva->Eval($prog, $target, @args);
+}
+sub EvalSelection {
+  my $eva = shift;
+  my $prog = $eva->SelectionGet;
+#   my $owner = $eva->SelectionOwner;
+#   # Incomplete. To support 'buttonize'... 
+#   if(defined $owner and $owner->IsText){
+#     if(eval { $owner->index('button') }){
+#       $prog = $owner->get($owner->TagCurrent('button'))
+#     }
+#   }
+  $eva->EvalWithDefaultArgs( $prog );
+}
+sub EvalWholeBuffer {
+  my $eva = shift;
+  my $prog = $eva->get("1.0", "end");
+
+  # not perfect.
+  $prog =~ s/^\n(=\w[\s\S]*?^=cut\b)//mg;
+  $prog =~ s/[;\n\s]+(?:Tk(?:::|->))?MainLoop\s*;//;
+  substr($prog, index($prog, "__E"."ND__")) = "";
+
+  $eva->Eval($prog);
+}
+sub SetTag {
+  my($eva, $index) = @_;
+  my $text = $eva->Subwidget('scratch');
+  $index ||= 'insert';
+  $index = $text->index($index);
+  # print "Now: SetTag ($index)\n";
+  my $tag = $eva->{"EvalTag"};
+  my $str = $eva->{"MarkerStr"};
+  $text->DeleteTagRegion($tag);
+  $text->insert($index => $str, $tag);
+}
+sub Tk::Text::DeleteTagRegion {
+  my($text, $tag) = @_;
+  return 0 if ! $text->tag(nextrange => $tag, '1.0', 'end');
+  my $lastpos = eval { $text->index("$tag.first") };
+  eval { $text->delete("$tag.first", "$tag.last") };
+  return $lastpos;
+}
+sub EvalFile {
+  my $eva = shift;
+  my $file = shift;
+  $file ||= $eva->FileSelect->Show;
+  if ($file) {
+    $eva->DoFile('Eval' => $file, @_);
+  }
+}
+sub Eval {
+  my ($eva, $prog, $target, @args) = @_;
+  my $pack = $eva->{"Package"} || "main";
+  if (defined $prog && $prog ne "") {
+    $eva->ClearErrorInfo;
+
+    ## Compile
+    #
+    my $code = eval "no strict; package $pack;"
+      . "sub { my $eva->{Context}result = do { $prog\n;}; }"; 
+    $eva->BackTrace("$@: '" . substr($prog, 0, 100) . "'")
+      if ! ref $code or ref $code ne "CODE";
+
+    ## Then Apply.
+    #
+    local(*FH);
+    open(FH, ">&STDOUT") or $eva->BackTrace("Can't duplicate STDOUT");
+    { my $dir = $eva->Directory; chdir($dir) if $dir };
+    my $t1  = new Benchmark;
+    my @res = eval { &$code( $target, @args ) };
+    my $t2  = new Benchmark;
+    close(STDOUT);
+    open(STDOUT, ">&FH") or $eva->BackTrace("Can't resume saved STDOUT");
+    if (!$@) {
+      if ( $eva->{"Echo"} ) {
+	print STDERR &timediff($t2, $t1)->timestr,"\n";
+	if ($eva->{"UsePretty"}) {
+	  print STDERR "<", &Pretty(@res), ">\n";
+	} else {
+	  print STDERR "<@res>\n";
+	}
+      }
+    }else {
+      $eva->BackTrace("$@\n in '". substr($prog, 0, 100) . "'");
+      # Automatic jump to error position would be helpfull.
+    }
+    $eva->Clear;
+    
+    $eva->AdHocPushWhenTargetWas($target, \@res)
+  }
+}
+sub AdHocPushWhenTargetWas {
+  my($eva, $target, $res) = @_;
+  if (@$res == 1 && _is_obj($res->[0]) ) {
+    if (_no_dup($target, $res->[0])) {
+      # Ad Hoc treatment.
+      # May be an object, and it is different to $target.
+      $eva->Target( $res->[0] );
+    }
+  } else {
+    $eva->Push(@$res);
+  }
+}
+sub _is_obj {
+  my $obj = shift;
+  return 0 if ! ref $obj || exists
+    {qw(ARRAY 1 SCALAR 1 HASH 1 REF 1 GLOB 1 CODE 1)}->{ref($obj)};
+  return 1;
+}
+sub _no_dup {
+  my ($old, $new) = @_;
+  return 0 if ! defined $new;
+  return 1 if ! defined $old;
+
+  no strict qw(refs); # Needed for perl5.002b??
+  return 1 if  defined $old
+    and _no_overload {$_[0] ne $_[1]} $new , $old;
+}
+### FileHandling ###
+sub Filename {
+  my $eva = shift;
+  return $eva->{'Filename'} if ! @_;
+  my $filename = shift;
+  return unless defined $filename and $filename ne "";
+  unless ($filename =~ m|^/|) {
+    $filename = $eva->Directory .'/'.$filename;
+  }
+  $eva->{'Filename'} = $filename;
+  my $title = $eva->MainWindow->title;
+  $title =~ s/\(.*\)//;
+  $filename =~ s|^$ENV{HOME}|~|;
+  $title .= " ($filename)";
+  $eva->MainWindow->title($title);
+  return $eva;
+}
+sub Directory {
+  my $eva = shift;
+  return $eva->cget(-directory) if ! @_;
+  $eva->configure(-directory => shift); return $eva;
+}
+sub OpenFile {
+  my ($eva, $filename) = @_;
+  # print "@_\n";
+  my $text = $eva->Subwidget("scratch");
+  unless (defined $filename and $filename) {
+    $filename = $eva->FileSelect->Show;
+  }
+  if (defined $filename) {
+    if (-f $filename) {
+      $eva->Filename($filename);
+      $eva->Directory( $filename =~ m|^ (.*/) [^/]+ $ |gx );
+      $text->delete("1.0", "end");   # Confirmation would be better.
+      $text->Read($filename);
+    } elsif ( -d $filename ) {
+      my $dir = $eva->Directory;
+      $filename =~ m|^/| or $filename = "$dir/$filename";
+      $eva->Target( $filename );
+      $eva->OpenDirectory( $filename );
+    } else {
+      $eva->Filename($filename);
+    }
+  }
+  $eva;
+}
+sub DoFile {
+  my ($eva, $method, $file, @rest) = @_;
+  local(*FH);
+  open(FH, $file) or $eva->BackTrace("Can't open '$file'");
+  
+  # Read by paragraph mode, with skipping pod.
+  local($/) = "";
+  my ($prog, $block) = ("","");
+  while (defined($block = <FH>)) {
+    if ($block =~ m/^=\w+\b/) {
+      $block = <FH> while $block !~ m/^=cut/;
+      $block = <FH>; # one more
+    }
+    $prog .= $block;
+  }
+  print STDERR $prog if $eva->{"Debug"};
+  $eva->$method($prog, @rest);
+  close(FH);
+}
+sub Save {
+  my $eva = shift;
+  my $text = $eva->Subwidget("scratch");
+  my $lastpos = $text->DeleteTagRegion( $eva->{'EvalTag'} );
+  my $file = $eva->Filename;
+  $text->SaveIfNeededAndPossible($file) if $file;
+
+  $eva->SetTag($lastpos) if $lastpos;
+}
+sub SaveAs {
+  my $eva = shift;
+  $eva->Filename($eva->FileSelect->Show);
+  $eva->Save;
+}
+#
+### 
+sub Tk::Text::TagCurrent {
+  my ($text, $tag) = @_;
+  my $index = $text->index('current');
+  my @range = $text->tag('ranges' => $tag);
+  # print "FOO($index)(@range)\n";
+  my $pair = sub {
+    my @res;
+    push @res, [shift, shift] while @_ ;
+    @res;
+  };
+  my $lookup = sub {
+    my ($code) = shift;
+    while ( @_ ) {
+      my $ix  = @_ >> 1 ;
+      my $res = &$code( $_[ $ix ]);
+      return $_[$ix] if $res == 0;
+      if ($res >= 0 ) {
+	splice(@_, 0, $ix);
+      } else {
+	splice(@_, $ix, $#_);
+      }
+    }
+    return wantarray ? () : undef;
+  };
+  if (@range) {
+    my $hit =  &$lookup
+      ( sub { 
+	my($a, $b) = @{ shift; };
+	(! $text->compare($a, '<=', $index) && -1)
+	  ||(! $text->compare($index,'<=',$b) && 1 )
+	    || 0;
+      }
+	=> &$pair(@range)
+      );
+    wantarray ? @$hit : $hit;
+  }
+}
+sub Tk::Text::SaveIfNeededAndPossible {
+  my ($text, $file) = @_;
+  $text->BackTrace("No filename is specified.")
+    unless defined $file and $file ne "";
+
+  my($dir) = $file =~ m|^ (.*?) [^/]+ $ |x;
+  $dir   ||= '.';
+
+  my $content;
+  chop($content = $text->get('1.0', 'end'));
+
+  local(*FH);
+  if (-w $file) {
+    my $old = "";
+    return if open(FH, $file) && read(FH, $old, -s $file)
+      && $old eq $content;
+
+    # No need to save.
+
+  } elsif (! -w $dir) {
+    return;
+
+    # The directory is not writable. Simply ignore.
+  }
+
+  my $mode = -e $file ? (stat($file))[2] : (~umask() & 0777) ;
+  # print STDERR map(unpack("B*", pack("S",$_)). "<$_>" , $mode), ": $file";
+
+  if (-w $file) {
+    rename($file, "$file~") or warn "Can't create backup: $file~";
+  }
+
+  open(FH, ">$file#") or $text->BackTrace("Can't open temp: $file#");
+  print FH $content;
+  close(FH);
+  chmod $mode, "$file#";
+  rename("$file#", $file) or $text->BackTrace("$!");
+}
+
+if ($OS =~ /Win32/) {
+  #                    ↓ここのスペースを忘れると cperl-mode が…
+  sub DummyRead ($$ $;$ ) {
+    # ダミープラグではないのよん〜
+    #
+    my ($fh) = shift;
+    my ($size) = pop;
+    my $bufref = \ $_[0];
+    # binmode($fh); # 要るか？
+    
+    return sysread($fh, $ $bufref, $size);
+  }
+  *Tk::IO::read = undef;
+  local $SIG{__WARN__} = sub { return (); };
+  *Tk::IO::read = \&DummyRead;
+}
+
+sub Tk::Text::Read {
+  my ($text, $file, $filter) = @_;
+
+  require Tk::IO;
+  my $fh = Tk::IO->new;
+  open($fh, $file) or $text->BackTrace("$0: $!: '$file'");
+  # $fh should be saved in $text.
+
+  unless ($filter and ref $filter eq 'CODE') {
+    $filter = sub { $_[0] };
+  }
+  my ($buf, $old_trailer, $new_trailer, $last_nl) = ("", "", "", 0);
+  while ($fh->read($buf, 1024 * 32)) {
+    # For Japanese multibyte char.
+    
+    $last_nl = rindex($buf, "\n") + 1;
+    $new_trailer = substr($buf, $last_nl);
+    substr($buf, $last_nl) = "";
+    
+    $text->insert('end', &$filter($old_trailer . $buf, $text) );
+    $text->update;
+    $buf = "";
+    $old_trailer = $new_trailer;
+  }
+  $fh->close;
+}
+sub Quit {
+  my ($eva, $mw) = @_;
+  $eva->Save;
+  $mw ||= $eva->parent;
+  @Evaluator::EVA::all =
+    map { defined $_ && $_ == $eva ? undef : $_ }
+    @Evaluator::EVA::all;
+  $mw->destroy;
+}
+sub QuitAll {
+  map { $_->Quit } grep { defined } @Evaluator::EVA::all;
+  exit;
+}
+sub RaiseOrOpen {
+  my ($eva, $file, $linenum, $search) = @_;
+  $eva->BackTrace("can't read <$file>") if ! -r $file;
+#   print "$file: ", join ", ",
+#   map { $_->Filename }
+#   grep {defined($_) && defined($_->Filename)}
+#   @Evaluator::EVA::all ; print "\n";
+  my @eva = grep {defined($_) && defined($_->Filename)
+		  && $_->Filename eq $file}
+		 @Evaluator::EVA::all ;
+  if (@eva) {
+    $eva[0]->MainWindow->deiconify;
+    $eva[0]->MainWindow->raise;
+  } else {
+    $eva[0] = &main::EVA( $file ) ;
+  }
+  $eva[0]->focus;
+  if (defined $linenum) {
+    $eva[0]->mark(set => 'insert', "$linenum.0");
+    $eva[0]->see('insert');
+    $eva[0]->tag('remove', 'sel', '0.0', 'end');
+    $eva[0]->tag('add', 'sel', "insert", "insert lineend");
+  }
+
+  if (defined $search) {
+    my $index = $eva[0]->search($search , 'insert');
+    $eva[0]->BackTrace("why? '$search' not found\n") if !defined $index;
+    $eva[0]->mark(set => 'insert', $index);
+  }
+}
+sub _first_undef {
+  my $array = shift;
+  my $i = 0;
+  $i++ while defined $array->[$i];
+  $i;
+}
+sub main::EVA {
+  my $mw = MainWindow->new;
+  my $children = \@Evaluator::EVA::all;
+  my $number;
+  {
+    my $id = $Evaluator::EVA::id;
+    $number = !defined $children->[$id] ? $id : _first_undef($children);
+  }
+  my($name, $title);
+  {
+    my %title = (0 => " PROT", 1 => " TEST");
+    $title = exists $title{$number} ? $title{$number} : "";
+    $name = sprintf("EVA-%02d", $number);
+  }
+  $mw->title( "$name$title" );
+  $mw->iconname( $name );
+
+  my $eva = $mw->Evaluator;
+  $mw->protocol('WM_DELETE_WINDOW' => [$eva, "Quit"]);
+  $eva->pack(-fill => "both", -expand => 1);
+  $children->[$number] = $eva;
+  # $eva->update; # Dangerous! this cause race condition.
+  $eva->OpenFile( shift ) if @_;
+  $eva->focus; #? 
+  $eva;
+}
+# sub Frame {
+#   Tk::Frame->new(@_);
+# }
+sub Tk::Receive {
+  # Not enough.
+  my ($top, $message) = @_;
+  $message =~ s/[\n\s]*$//;
+  my $eva = $Evaluator::EVA::all[-1];
+  if (-d $message or -f $message) {
+    $eva->EvalFile($message);
+  } else {
+    $eva->Eval($message, $eva);
+  }
+}
+sub Tk::Widget::WithScrollbars {
+# In normal case, use 'Tk::Widget::Scrolled', instead.
+  my $cw     = shift;
+  my $parent = $cw->parent;
+  $cw->pack; # to enable '->configure'.
+  $parent->AddScrollbars($cw);
+  if (!@_) {
+    # Depend on Implementation  of ConfigSpecs.
+    push @_ , $parent->ConfigSpecs->{-scrollbars}->[3];
+  }
+  $parent->configure(-scrollbars => shift);
+  $cw;
+}
+
+####  Single purpose Entry Family.
+# Of course, These are only experimental work
+# for future 'General purpose user customizable Minibuffer'.
+{
+  package Tk::GrepEntry;
+  @Tk::GrepEntry::ISA = qw(Tk::LabEntry);
+  Tk::Widget->Construct('GrepEntry');
+  use Carp;
+  sub InitObject {
+    my ($cw,$args) = @_;
+    $args->{'-label'}     ||= 'Grep'; 
+    $args->{'-labelPack'} ||= [-side => 'left'];
+    $args->{'-directory'} ||= eval { $cw->parent->Directory } || '.';
+    $cw->Populate($args);
+    $cw->ConfigSpecs
+      (-directory   =>['PASSIVE',  undef, undef, '.'],
+       -debug       =>['PASSIVE',  undef, undef, 0],
+       # should manage listbox-list 
+       );
+    $cw->pack(-fill => "x", -expand => 0);
+    $cw->bind('<Return>', [$cw, 'Grep']);
+    $cw->ConfigDefault($args);
+    $cw;
+  }
+  sub Directory {
+    # to permit both of obj & scalar.
+    my $self = shift;
+    if (@_) {
+      # store
+      $self->configure(-directory => shift);
+      return $self;
+    } else {
+      # fetch
+      my $directory = $self->cget(-directory);
+      if (!ref $directory) {
+	return $directory;
+      } else {
+	if (ref $directory eq 'CODE') { 
+	  $directory = &$directory;
+	} elsif (eval { $directory->IsWidget }) {
+	  $directory = $directory->cget(-directory);
+	} elsif ( $@ ) {
+	  $self->BackTrace("GrepEntry: invalid directory ($directory), $@.");
+	}
+	return $directory;
+      }
+    }
+  }
+  sub Grep {
+    my($self) = @_;
+    my $pattern = $self->get;
+    $pattern =~ s|/      |"\\/"   |gex;
+    $pattern =~ s|([\'!])|"'\\$1'"|gex;
+    my $mw = MainWindow->new;
+    my $listbox = $mw->RefListbox
+      (-opencommand => [$self, 'TagJump', $1]
+      ,-width       => 80 ,-height      => 15
+      ,-update      => 1 ,-exportselection => 0
+      );
+    $listbox->pack(-fill=>"both", -expand => 1);
+    $mw->Button(-text => 'Stop', -command => [$listbox, 'Close'])
+      ->pack(-fill => 'x', -expand => 0);
+    $mw->protocol('WM_DELETE_WINDOW' => sub {
+       $listbox->Close;
+       $mw->destroy;
+    });
+    my $directory = $self->Directory;
+    my $prog = <<"END";
+    cd $directory;
+    perl -nle 'close(ARGV) if /\\000/ || eof;
+               print "\$ARGV:\$.:\$_" if m/$pattern/o;' *
+END
+    $prog =~ tr/\n//d;
+    print STDERR "<$prog>\n" if $self->cget(-debug);
+    $listbox->Read("$prog|");
+    # $listbox->Exec("cd $directory;grep -n $pattern");
+
+    if ($listbox->index("end") == 0) {
+      $mw->destroy;
+    }
+  }
+  sub TagJump {
+    my ($self, $pat, $selection)  = @_;
+    $self->focus;
+    my ($file, $line) = (split(':', $selection, 3))[0,1];
+    # Bad design. Listbox also should have own directory.
+    # Currently, this directory is GrepEntry's directory.
+    my $directory = $self->Directory;
+    Evaluator::EVA->RaiseOrOpen("$directory/$file", $line, $pat);
+  }
+}
+{
+  package Tk::SearchEntry;
+  require Tk::LabEntry;
+  @Tk::SearchEntry::ISA = qw(Tk::LabEntry);
+  Tk::Widget->Construct('SearchEntry');
+  use Carp;
+  sub new {
+    my ($package, $top, %args) = @_;
+    $args{'-target'} = $top if ! exists $args{'-target'};
+    $top = $top->parent until $top->IsFrame;
+    $package->SUPER::new($top, %args);
+  }
+  sub InitObject {
+    my ($cw,$args) = @_;
+    $args->{'-label'}     ||= 'Search'; 
+    $args->{'-labelPack'} ||= [-side =>'left'];
+    $cw->AddMenu
+      (['Options'
+	,-borderwidth => 1, -relief => 'raised'
+	,-underline => 0
+	,"-pack" => [-side => 'right','-anchor' => 'e']
+	# ,-side => 'right'
+	# ,-anchor => 'e'
+       ]
+       => 'checkbutton', -offvalue => undef
+       ,['backwards' => \$cw->{'Back'}  ,-onvalue => '-backwards']
+       ,['no case'   => \$cw->{'NoCase'},-onvalue => '-nocase'   ]
+       ,':invoke'
+       ,['regexp'   => \$cw->{'Regexp'} ,-onvalue => '-regexp']
+       => 'command'
+       ,['Clear Mark' => [$cw, 'ClearMark']]
+      );
+    $cw->Populate($args);
+    $cw->ConfigSpecs
+      (-target =>['PASSIVE', undef, undef, $cw->parent],
+       -debug => ['PASSIVE', undef, undef, 0],
+       -matchbackground => ['PASSIVE', undef, undef, 'SeaGreen3'],
+       -matchforeground => ['PASSIVE', undef, undef, 'white'],
+       );
+    {
+      my $top_slave = ($cw->parent->packSlaves)[0];
+      $cw->pack(-fill => "x", -expand => 0
+		,(defined $top_slave ? (-before => $top_slave) : ())
+		, -side   => 'bottom'
+	       );
+    }
+
+    $cw->bind('<Return>', [$cw, 'Search']);
+    $cw->bind('<Control-s>' => sub { $cw->{'Back'} = undef });
+    $cw->bind('<Control-r>' => sub { $cw->{'Back'} = '-backwards' });
+    # Tricky. There may be more reasonable binding.
+    $cw->bind('<Double-Control-s>' => [$cw, 'Search']);
+    $cw->bind('<Double-Control-r>' => [$cw, 'Search']);
+
+    $cw->ConfigDefault($args);
+    $cw; # ConfigDefault doesn't return $cw
+  }
+  sub Search {
+    my $self   = shift;
+
+    my $target = $self->cget(-target);
+    $self->BackTrace('no target') if ! defined $target;
+
+    my @options = grep {defined $_ && m/^-\w/ }
+                  @{$self}{ qw(NoCase Back Regexp) };
+    print " <", join(", ", @options),">>\n" if $self->cget(-debug);
+
+    my $pattern = $self->get;
+    if (!defined $pattern or $pattern eq '') {
+      # If no pattern presents, only scroll.
+      $target->ScrollPages( defined $self->{'Back'} ? -1 : 1 );
+      return;
+    }
+    my $start;
+    {
+      my $tag = "search." .
+	(defined $self->{'Back'} ? 'first' : 'last');
+      unless ($start = eval{ $target->index($tag) }) {
+	$start = "insert";
+	$target->tag(configure => 'search',
+		     -borderwidth => 1, -relief   => 'sunken',
+		     -background => $self->cget(-matchbackground),
+		     -foreground => $self->cget(-matchforeground),
+		    );
+      }
+      unless ($target->bbox( $start )) {
+	# $start is not in current page.
+	if ( $target->bbox('insert') ) {
+	  $start = $target->index('insert');
+	} else {
+	  $start = '@0,0';
+	}
+      }
+    }
+    my $len = -1;
+    my $index = $target->search
+      (@options, -count => \$len, $pattern, $start);
+
+    print "|$start --> $index|\n" if $self->cget(-debug);
+    if (defined $index) {
+      $target->see($index);
+      # 
+      $target->tag(remove => 'search', "1.0", "end");
+      $target->tag(add => 'search', $index, "$index + $ {len}c");
+    } else {
+      # $self->BackTrace("no match");  # too much...
+      $self->bell;
+      $target->tag(remove => 'search', "1.0", "end");
+    }
+    Tk->break;
+  }
+  sub ClearMark {
+    my($cw) = @_;
+    my $target = $cw->cget(-target);
+    $target->tag(remove => qw(search 1.0 end));
+  }
+}
+
+### builtin tkpod/tkhtml/tkweb support.
+### completely stolen from its original in Tk-b9/*
+{
+  package Evaluator::EVA::Pod;
+  use base qw(MainWindow);
+  Construct Tk::Widget 'Evaluator::EVA::Pod';
+
+  eval {
+    require Tk::Pod::Text;
+  };
+  if ($@) {
+    warn "Tk::Pod::Text is not available\n";
+  }
+  sub new {
+    my ($pack, $eva) = @_;
+    my $tkpod = $pack->SUPER::new();
+    $tkpod->{"pod"} = $tkpod->Scrolled(PodText => -scrollbars => "osoe");
+    $tkpod->Default(pod => $tkpod->{"pod"});
+    $tkpod->SearchEntry;
+    $tkpod->{"EVA"} = $eva;
+    $tkpod;
+  }
+  sub Link {
+    my ($w,$index,$link) = @_;
+    my (@range) = $w->tag('nextrange',$link,$index);
+    if (@range == 2) {
+      $w->SUPER::Link($index, $link);
+    } else {
+      $w->{"EVA"}->tkpod( $link =~ m|^([^/]+)/|g );
+    }
+  }
+  sub DoubleClick {
+    my $tkpod = shift;
+    $tkpod->{"EVA"}->tkpod(@_);
+  }
+}
+sub tkpod {
+  my ($eva, $file) = @_;
+  #
+  print "tkpod start\n";
+  $eva->idletasks;
+  $file = $eva->SelectionGet if !defined $file;
+  # to avoid meaningless invocation.
+  return if $file =~ m/[\n;\s\$\&\->]/; # too much?
+  #
+  my $pod = Evaluator::EVA::Pod->new($eva);
+  $pod->title($file);
+  $pod->iconname($file =~ m| ([^/]+) $ |x );
+
+  push @Evaluator::EVA::tkpod, $pod;
+  $eva->Target($pod); # too much?
+
+  print "tkpod is just created\n";
+
+  $pod->tag('configure' => 'verbatim',
+	    -background => 'honeydew',
+	    -borderwidth => 2, -relief   => 'sunken',
+	    );
+  $pod->tag(lower => 'verbatim' , 'sel');
+  $pod->tag('bind' => 'verbatim', '<3>' => sub {
+    my($text) = @_;
+    my $e = $text->XEvent;
+    my @range = $pod->TagCurrent('verbatim');
+    if (@range == 2) {
+      $pod->tag( qw(remove sel 1.0 end) );
+      $pod->tag("add","sel", @range, );
+      my $menu = $eva->Subwidget('stdmenu')->Subwidget('Eval')
+	->cget('-menu');
+      $menu->PostOverPoint($e->X, $e->Y, 1);
+      $menu->grabGlobal;
+      $menu->focus;
+    }
+  } );
+
+  $pod->tag('bind' => 'F', '<Double-1>' => sub {
+    my @range = $pod->TagCurrent('F');
+    if (@range == 2) {
+      $eva->tkweb( $pod->get(@range) );
+      Tk->break;
+    }
+  });
+
+  print "tkpod now reading $file\n";
+  $pod->configure(-file => $file);
+  print "tkpod ok.\n";
+  $pod;
+}
+
+sub tkweb {
+  my ($eva, $url) = @_;
+
+  require Tk::Web;
+  eval { require Tk::HTMLText };
+  require LWP::TkIO or $eva->BackTrace(<<"END");
+You don\'t have the module LWP::TkIO
+You need: <ANY-CPAN>/modules/by-module/LWP/libwww-perl-5b8.tar.gz
+or later version.
+END
+  require LWP::UserAgent;
+  require URI::URL;
+
+  unless (ref $url) {
+    $url = URI::URL->new($url, URI::URL->newlocal);
+  }
+  my $showlink;
+  my $mw = MainWindow->new();
+  my $w  = Tk::Web->new($mw, -showlink => sub { $showlink = shift });
+  my $ua = $w->UserAgent;
+
+  LWP->Version >= 0.08 ? $ua->env_proxy : $ua->envProxy;
+  $w->{'-header'} = {'Accept' =>
+		     join(',', qw(text/html       text/plain
+				  image/gif       image/x-xbitmap
+				  image/x-pixmap  */*)),
+		     'User-Agent' => 'tkweb/.xx'}; # ? eva/.xx?
+  $mw->SearchEntry(-target => $w);
+  #
+  $mw->AddScrollbars($w);
+  $w->pack(-fill => "both", -expand => 1);
+  $eva->update;
+  my $but = $mw->Frame->pack(-fill => 'x');
+  Tk::pack($but->Button(-text => 'Back', -command => [$w,'Back']),
+	   $but->Button(-text => 'Quit', -command => [$mw,'destroy']),
+	   -side => 'left');
+  my %args = (-scrollbars => 'rw');
+  $mw->ConfigDefault(\%args);
+  $mw->configure(%args);
+  push @Evaluator::EVA::tkweb, $w;
+  $eva->Target($w);
+  LWP->Version >= 0.08 and $w->url($url) or $w->url('GET', $url);
+  $w->focus;
+}
+
+sub tkhtml {
+  my ($eva, $file) = @_;
+  $file ||= $eva->FileSelect
+    (-directory => $eva->cget('-helpDirectory') ) ->Show;
+  $eva->BackTrace('no file specified') if ! defined $file;
+  $eva->configure( -helpDirectory =>
+		  ($file =~ m/ ^(.*?) (?:[^\/]+)$ /x));
+  eval { require Tk::HTMLText };
+  # eval { $Tk::HTML::{'html'} = \&process_html};
+  $eva->update;
+  my $mw = MainWindow->new();
+  my $w  = Tk::HTMLText->new($mw);
+  $w->pack(-expand => 1, -fill => 'both');
+  $mw->SearchEntry(-target => $w);
+  $mw->AddScrollbars($w);
+  $eva->update;
+  my %args = (-scrollbars => 'rw',
+	      -title => ($file=~ m/ ([^\/]+)$ /x) );
+  $mw->ConfigDefault(\%args);
+  $mw->configure(%args);
+  $eva->update;
+  $w->focus;
+  push @Evaluator::EVA::tkhtml, $w;
+  $eva->Target($w);
+  $w->file( $file );
+}
+sub process_html {
+  package Tk::HTML;
+  my ($w,$html) = @_; 
+  my $var = \$w->{Configure}{"-html"};
+  if (@_ > 1) {
+    $$var = $html;
+    # $html = Tk::Kconv::toeuc($html);
+    my $data;
+    my $counter = 0;
+    foreach $data (split(/(<[^\0]*?>)/,$html)) {
+      if (substr($data,0,1) eq '<') {
+	$w = $w->Tag($data);
+      } else {
+	$w->Text($data);
+      }
+      if ($counter++ > 5) {
+	$w->update;
+	$counter = 0;
+      }
+    }
+  }
+  return $$var;
+}
+
+##### end ####
+package main;
+use Tk;
+use Tk::Pretty;
+{
+  our $EVA = &EVA->ViewStack(1);
+  $EVA->OpenFile( shift ) if @ARGV;
+}
+MainLoop;
+
+__END__
