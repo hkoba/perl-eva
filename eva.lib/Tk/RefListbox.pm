@@ -1,4 +1,5 @@
 package Tk::RefListbox;
+# -*- mode: perl; coding: utf-8 -*-
 use strict;
 use Carp;
 
@@ -520,8 +521,8 @@ Simple MH interface, using lazy "scan" via B<Read> command.
 
 KOBAYASI Hiroaki -- hkoba@t3.rim.or.jp --
 
-   in Japanese, ¾®ÎÓ ¹°ÌÀ -- h¾®ÎÓ¡÷Âè3Åìµş.¥ê¥à¥Í¥Ã¥È --
-     ¤³¤ì¤¬»ä¤Î_¡Ø¤Û¤È¤Ğ¤·¤ëÇ®¤¤¥Ñ¥È¥¹¡Ù¤Ã¤Æ¤ä¤Ä¤Ç¤¹
+   in Japanese, å°æ— å¼˜æ˜ -- hå°æ—ï¼ ç¬¬3æ±äº¬.ãƒªãƒ ãƒãƒƒãƒˆ --
+     ã“ã‚ŒãŒç§ã®_ã€ã»ã¨ã°ã—ã‚‹ç†±ã„ãƒ‘ãƒˆã‚¹ã€ã£ã¦ã‚„ã¤ã§ã™
 
 =cut
 

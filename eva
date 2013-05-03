@@ -1,5 +1,5 @@
 #!/usr/bin/perl -w
-# -*- perl -*-
+# -*- mode: perl; coding: utf-8 -*-
 # Copyright (c) 1995,1996,1998 by KOBAYASI Hiroaki. All rights
 # reserved.  This is free software; you can redistribute
 # part/whole of it and/or modify part/whole of it under the same
@@ -458,8 +458,8 @@ More refinement for internal codes.
 
 KOBAYASI Hiroaki -- hkoba@t3.rim.or.jp --
 
-   in Japanese, ¾®ÎÓ ¹°ÌÀ -- h¾®ÎÓ¡÷Âè3Åìµş.¥ê¥à¥Í¥Ã¥È --
-     ¤³¤ì¤¬»ä¤Î_¡Ø¤Û¤È¤Ğ¤·¤ëÇ®¤¤¥Ñ¥È¥¹¡Ù¤Ã¤Æ¤ä¤Ä¤Ç¤¹
+   in Japanese, å°æ— å¼˜æ˜ -- hå°æ—ï¼ ç¬¬3æ±äº¬.ãƒªãƒ ãƒãƒƒãƒˆ --
+     ã“ã‚ŒãŒç§ã®_ã€ã»ã¨ã°ã—ã‚‹ç†±ã„ãƒ‘ãƒˆã‚¹ã€ã£ã¦ã‚„ã¤ã§ã™
 
 You can get recent version of EVA from:
 F<http://www.t3.rim.or.jp/~hkoba/ptk/eva/>
@@ -471,7 +471,7 @@ Any comments, suggestions and requests are welcome.
 use File::Basename;
 use lib dirname($0);
 package Evaluator::EVA;
-########### EVA ½é¹æµ¡ (sorry, this is Japanese)##############
+########### EVA åˆå·æ©Ÿ (sorry, this is Japanese)##############
 BEGIN {
   if (-d "./blib") {
     # If current directory has './blib' directory,
@@ -517,7 +517,7 @@ use Tk::Menubutton;
   $id ||= undef;
   ($id) = $version =~ m/eva,v (\d)\./;
 
-# ºÆÄêµÁ¤·¤Æ¤ä¤ë¡ª
+# å†å®šç¾©ã—ã¦ã‚„ã‚‹ï¼
 #  BEGIN { undef *Tk::Derived::Component };
 # sub Tk::Derived::Component
 # {
@@ -823,6 +823,7 @@ sub Populate {
     ( ["Help", -underline => 0
        ,"-pack" => [-side => 'right','-anchor' => 'e']
        ,-side => 'right'
+       , -state => ($Evaluator::EVA::Pod::OK ? 'normal' : 'disabled')
        #,'-anchor' => 'e'
       ]
      ,["Pod: EVA"           => [ $eva, "tkpod", $0]]
@@ -1025,15 +1026,20 @@ sub OpenDirectory {
   closedir(D);
   $eva;
 }
+sub globref {
+  my ($class, $name) = @_;
+  no strict 'refs';
+  \*{join("::", ref $class || $class, $name)};
+}
 sub OpenGlob {
   my ($eva, $glob) = @_;
   my @res;
-  no strict 'refs';
-  push @res, \${ $glob } if defined $ { $glob };
-   # to be happy with cperl-mode ----^
-  push @res, \@{ $glob } if defined @{ $glob };
-  push @res, \%{ $glob } if defined %{ $glob };
-  push @res, \&{ $glob } if defined &{ $glob };
+
+  foreach my $type (qw/SCALAR ARRAY HASH CODE/) {
+    my $item = *{$glob}{$type}
+      or next;
+    push @res, $item;
+  }
   $eva->Clear->Push( @res );
   $eva;
 }
@@ -1067,7 +1073,7 @@ sub OpenReference {
   if ($type eq 'HASH'
       && do {
 	exists $selection->{"_Tcl_CmdInfo_\0"} or
-	  eval {# ¤³¤³¤òÊÑ¤¨¤¿¡£
+	  eval {# ã“ã“ã‚’å¤‰ãˆãŸã€‚
 		UNIVERSAL::isa($selection, "Tk")
 		  and $selection->IsWidget } }) {
     my @res;
@@ -1098,11 +1104,13 @@ sub OpenReference {
 }
 sub _is_overloaded {
   my $obj = shift;
-  no strict 'refs';
-  local( *PKG:: ) = \%{ ref($obj) .'::' };
+
   return 0 if ref($obj) eq "Overload::Fake";
-  exists $PKG::{'OVERLOAD'}
-  && defined %{ref($obj) . '::OVERLOAD'};
+
+  my $ns = globref($obj, '');
+  my $symtab = *{$ns}{HASH};
+
+  $symtab->{'OVERLOAD'} && *{globref($obj, 'OVERLOAD')}{HASH}
 }
 sub _type {
   # careful version of overload::AddrRef
@@ -1765,14 +1773,14 @@ sub Tk::Text::SaveIfNeededAndPossible {
 }
 
 if ($OS =~ /Win32/) {
-  #                    ¢­¤³¤³¤Î¥¹¥Ú¡¼¥¹¤òËº¤ì¤ë¤È cperl-mode ¤¬¡Ä
+  #                    â†“ã“ã“ã®ã‚¹ãƒšãƒ¼ã‚¹ã‚’å¿˜ã‚Œã‚‹ã¨ cperl-mode ãŒâ€¦
   sub DummyRead ($$ $;$ ) {
-    # ¥À¥ß¡¼¥×¥é¥°¤Ç¤Ï¤Ê¤¤¤Î¤è¤ó¡Á
+    # ãƒ€ãƒŸãƒ¼ãƒ—ãƒ©ã‚°ã§ã¯ãªã„ã®ã‚ˆã‚“ã€œ
     #
     my ($fh) = shift;
     my ($size) = pop;
     my $bufref = \ $_[0];
-    # binmode($fh); # Í×¤ë¤«¡©
+    # binmode($fh); # è¦ã‚‹ã‹ï¼Ÿ
     
     return sysread($fh, $ $bufref, $size);
   }
@@ -2125,12 +2133,17 @@ END
   package Evaluator::EVA::Pod;
   use base qw(MainWindow);
   Construct Tk::Widget 'Evaluator::EVA::Pod';
-
-  eval {
-    require Tk::Pod::Text;
-  };
-  if ($@) {
-    warn "Tk::Pod::Text is not available\n";
+  our $OK;
+  BEGIN {
+    eval {
+      require Tk::Pod::Text;
+    };
+    if ($@) {
+      warn "Tk::Pod::Text is not available\n";
+      $OK = 0;
+    } else {
+      $OK = 1;
+    }
   }
   sub new {
     my ($pack, $eva) = @_;

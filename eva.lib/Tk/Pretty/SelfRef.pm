@@ -138,13 +138,20 @@ sub _is_blessed {
   return 0 if exists $types->{ref($obj)};
   return 1;
 }
+sub globref {
+  my ($class, $name) = @_;
+  no strict 'refs';
+  \*{join("::", ref $class || $class, $name)};
+}
 sub _is_overloaded {
   my $obj = shift;
-  no strict 'refs';
-  local( *PKG:: ) = \%{ ref($obj) .'::' };
+
   return 0 if ref($obj) eq "Overload::Fake";
-  exists $PKG::{'OVERLOAD'}
-  && defined %{ref($obj) . '::OVERLOAD'};
+
+  my $ns = globref($obj, '');
+  my $symtab = *{$ns}{HASH};
+
+  $symtab->{'OVERLOAD'} && *{globref($obj, 'OVERLOAD')}{HASH}
 }
 %Overload::Fake::OVERLOAD = qw(fallback 1); # Why!!!
 

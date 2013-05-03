@@ -1,3 +1,4 @@
+# -*- mode: perl; coding: utf-8 -*-
 # $Id: AddMenu.pm,v 1.2.2.1 1998/11/17 14:12:17 hkoba Exp $
 
 # This routine is now obsolete from main stream of perl/Tk.
@@ -220,7 +221,7 @@ sub Tk::Menubar::CreateMenu {
 
   use Tk::Pretty;
   PrintArgs( &$converter(@_) );
-  # ¤Ş¤À»È¤¨¤Ê¤¤¡Ä ¤Ê¤¼¤Ê¤é, 
+  # ã¾ã ä½¿ãˆãªã„â€¦ ãªãœãªã‚‰, 
   $self->AddMenu( &$converter(@_) );
   print &timediff(new Benchmark, $t1)->timestr,"\n";
   # 
