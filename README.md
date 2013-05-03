@@ -1,15 +1,25 @@
-EVA -- pesudo-stack based evaluator of perl expression.
+EVA -- visual-stack based evaluator of perl expression.
+====================
+
+Note: This code is not maintained now. I placed this here just for reference.
+Feel free to fork this.
 
 EVA is a Perl/Tk script which is intended to serve as an
 environment for your "casual" programming life.
 
 To install EVA, simply
-	perl INSTALL.PL  | sh -x
 
-To get usage in English,
-	perldoc  ./eva
+    git clone https://github.com/hkoba/perl-eva.git
+    ln -s perl-eva/eva  YOUR_BINDIR/eva
 
----- Changes  -----
+To get usage,
+
+    perldoc eva
+
+
+Changes
+----------
+
 Changes in 1.2.2.2:
  * RCS-Id of Most modules are re-numbered.
 
@@ -49,9 +59,8 @@ New (experimental) features:
  * 'Find ISA Hierarchy' in 'Inspect' menu retrieves class 
    hierarchy and push it on stack. # So you can 'Open' it.
 
-----
-Any comments, suggestions are welcome.
-========
+
+
 KOBAYASI Hiroaki -------- hkoba@t3.rim.or.jp --------
 If you feel my english is strange, please correct me.
 As a "casual" programmer, I really need 'perl/Tk'.
