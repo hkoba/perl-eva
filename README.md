@@ -7,6 +7,8 @@ Feel free to fork this.
 EVA is a Perl/Tk script which is intended to serve as an
 environment for your "casual" programming life.
 
+![Screenshot-1](eva-sshot-1.jpg)
+
 To install EVA, simply
 
     git clone https://github.com/hkoba/perl-eva.git
