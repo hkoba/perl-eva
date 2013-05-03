@@ -1,4 +1,4 @@
-EVA -- visual-stack based evaluator of perl expression.
+EVA -- visual-stack based evaluator for perl expressions.
 ====================
 
 Note: This code is not maintained now. I placed this here just for reference.
@@ -58,9 +58,3 @@ New (experimental) features:
  
  * 'Find ISA Hierarchy' in 'Inspect' menu retrieves class 
    hierarchy and push it on stack. # So you can 'Open' it.
-
-
-
-KOBAYASI Hiroaki -------- hkoba@t3.rim.or.jp --------
-If you feel my english is strange, please correct me.
-As a "casual" programmer, I really need 'perl/Tk'.
