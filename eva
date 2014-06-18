@@ -1,4 +1,4 @@
-#!/usr/bin/perl -w
+#!/usr/bin/env perl
 # -*- mode: perl; coding: utf-8 -*-
 # Copyright (c) 1995,1996,1998 by KOBAYASI Hiroaki. All rights
 # reserved.  This is free software; you can redistribute
@@ -6,6 +6,7 @@
 # terms as Perl itself.
 # NO WARRANTY. PLAY WITH YOUR OWN RISKS.
 use strict;
+use 5.009;
 
 #-----------------
 use FindBin;
@@ -1026,11 +1027,6 @@ sub OpenDirectory {
   closedir(D);
   $eva;
 }
-sub globref {
-  my ($class, $name) = @_;
-  no strict 'refs';
-  \*{join("::", ref $class || $class, $name)};
-}
 sub OpenGlob {
   my ($eva, $glob) = @_;
   my @res;
@@ -1173,44 +1169,55 @@ sub Tk::Widget::SubWidgetsWithName {
   }
 }
 
+sub globref {
+  my ($thing, @name) = @_;
+  my $class = ref $thing || $thing;
+  no strict 'refs';
+  \*{join("::", $class, @name)};
+}
+
+sub list_sym_array {
+  my ($sym) = @_;
+  my $aref = *{$sym}{ARRAY}
+    or return;
+  @$aref;
+}
+
 sub FindMethods {
 # depth first, pre-order search of 'sub'.
 # In the real sense, this should be called 'Findsubs'.
-  no strict 'refs';
   my ($eva, $obj, $visited, $found) = @_;
   $visited ||= {};
   $found   ||= {};
   my $class = ref($obj) ? ref($obj) : $obj;
   $visited->{$class} = 1;
-  local( *PKG:: ) = \%{ $class ."::" };
+  my $symtab = *{globref($class, "")}{HASH};
+
   my $name;
-  foreach $name ( keys %PKG:: ) {
+  foreach $name ( keys %$symtab ) {
+    next if $found->{$name};
+    next unless *{$symtab->{$name}}{CODE};
     $found->{$name} = $class
-      if defined &{ $class . "::$name" } && ! exists $found->{$name};
   }
-  if (exists $PKG::{'ISA'} && defined @{ $class . "::ISA" }) {
-    my $super;
-    foreach $super ( @{ $class . "::ISA" } ) {
+  if ($symtab->{ISA}) {
+    foreach my $super (list_sym_array($symtab->{ISA})) {
       $eva->FindMethods($super, $visited, $found)
 	if ! exists $visited->{$super};
     }
   }
   $found;
 }
+
 sub FindISAHierarchy {
   no strict 'refs';
   my($eva, $obj, $found) = @_;
   $found   ||= [];
 
   my $class = ref($obj) ? ref($obj) : $obj;
-  local( *PKG:: ) = \%{ $class ."::" };
+  my $symtab = *{globref($class, "")}{HASH};
 
-  my @SuperS = ();
-  if (exists $PKG::{'ISA'} && defined @{ $class . "::ISA" }) {
-    @SuperS = @{ $class . "::ISA" };
-  }
-  my $super;
-  foreach $super ( @SuperS ) {
+  my @SuperS = list_sym_array($symtab->{ISA});
+  foreach my $super ( @SuperS ) {
       $eva->FindISAHierarchy($super,  $found)
 	if ! grep { $_ eq $super } @$found;
   }
@@ -2150,7 +2157,7 @@ END
     my $tkpod = $pack->SUPER::new();
     $tkpod->{"pod"} = $tkpod->Scrolled(PodText => -scrollbars => "osoe");
     $tkpod->Default(pod => $tkpod->{"pod"});
-    $tkpod->SearchEntry;
+    # XXX: $tkpod->SearchEntry; <= "-pack" option problem.
     $tkpod->{"EVA"} = $eva;
     $tkpod;
   }
